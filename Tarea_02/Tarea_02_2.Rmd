@@ -1,0 +1,67 @@
+---
+title: "Tarea_02"
+author: "Mario Becerra"
+output: html_document
+---
+
+```{r setup}
+options(digits=2)
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos')
+library(ggplot2)
+library(plyr)
+library(dplyr)
+datos <- read.csv('./Notas LuisFe/clase_1_mbasket/datos/srep00196-s3.csv')
+load(file='./Tareas/Tarea02_baskets.RData')
+```
+
+Se cargaron los archivos **.RData** que se había creado anteriormente. Este archivo contiene una lista larga de las recetas y sus ingredientes.
+
+```{r}
+head(baskets, 10)
+```
+
+El código con el que se creó la lista fue el siguiente:
+
+```{r}
+# 
+# baskets <- lapply(seq(nrow(datos)), function(i){ 
+#   b <- as.vector(as.matrix(datos[i,2:31]))
+#   data.frame(id = i, region=datos[i,1],  ing = b[b!=""] )}) %>%
+#   rbind_all
+```
+
+El número total de ingredientes es:
+
+```{r}
+length(unique(baskets$ing))
+```
+
+Crear data frames en forma de singles para cada región:
+
+```{r}
+baskets_african<-baskets[baskets$region=='African',c(1,3)]
+write.table(baskets_african, file='./Tareas/baskets_african.csv', sep=',', row.names=FALSE)
+transac_african <- read.transactions('./Tareas/baskets_african.csv', format='single', cols=c(1,3))
+itemFrequency(transac_african) %>% sort
+ap.1 <- apriori(transac_african, parameter = list(minlen=1, target='frequent itemsets'))
+inspect(sort(ap.1, by='support')[1:30])
+```
+
+Encontrando los 20 itemsets más frecuentes de tamaño 1 para África:
+
+```{r}
+itemFrequency(transac_african) %>% sort
+```
+
+Ahora los 20 itemsets más frecuentes de tamaño 2:
+
+```{r}
+
+```
+
+
+
+
+
+
+
