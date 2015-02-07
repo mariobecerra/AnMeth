@@ -1,4 +1,4 @@
-# AnalyticMethod
+# AnalyticMethods
 Homeworks for the Analytic Methods course at ITAM, Mexico City.
 Professor Luis Felipe González
 
