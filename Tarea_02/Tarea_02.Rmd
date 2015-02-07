@@ -1,0 +1,19 @@
+---
+title: "Homework 1"
+author: "Mario Becerra"
+date: "06/02/2015"
+output: html_document
+---
+#Similarity Analysis of Mexican News
+
+In this work, a similarity analysis is made on a dataset containing mexican news from different newspapers.
+
+```{r setup}
+news <- read.csv('news.csv', colClasses=c('NULL', 'character'), header=F, col.names=c('NULL', 'Cont'))
+head(news, 3)
+```
+
+```{r, echo=FALSE}
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_02')
+```
+
