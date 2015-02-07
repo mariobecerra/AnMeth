@@ -34,3 +34,5 @@ microbenchmark(b_1 <- comprime_no_vect(a, 20, 30), b_1 <- comprime_vect(a, 20, 3
 # expr       min       lq      mean   median        uq       max neval
 # b_1 <- comprime_no_vect(a, 20, 30) 47.713389 52.04265 56.404543 55.51183 58.493175 75.518920    10
 # b_1 <- comprime_vect(a, 20, 30)  1.267547  1.47227  1.613893  1.57277  1.804761  1.983951    10
+
+source(paste(getwd(),"/other.R",sep=""))
