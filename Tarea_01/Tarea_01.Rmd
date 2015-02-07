@@ -1,5 +1,5 @@
 ---
-title: "Homework 2"
+title: "Homework 1"
 author: "Mario Becerra"
 output: html_document
 ---
@@ -15,14 +15,14 @@ library(dplyr)
 ```
 
 ```{r, echo=FALSE}
-setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_02')
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_01')
 ```
 
 ```{r}
-load(file='./Tarea02_baskets.RData')
+load(file='./Tarea01_baskets.RData')
 ```
 
-The file *Tarea02_baskets.RData* contains a long list of ingredients used in different recipes around the world. The format is:
+The file *Tarea01_baskets.RData* contains a long list of ingredients used in different recipes around the world. The format is:
 
 1. **id**: The id of each recipe. Each recipe has a unique id.
 
