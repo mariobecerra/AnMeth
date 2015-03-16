@@ -1,0 +1,146 @@
+---
+title: "Homework 3"
+author: "Mario Becerra 124362"
+date: "04/03/2015"
+output: html_document
+---
+```{r, echo=FALSE}
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_03')
+load('./Data/dat_nflix.Rdata')
+```
+
+We will build a recommender system for a sample of the Netflix dataset released for the Kaggle contest. It has only `r length(unique(dat.muestra$usuario_id))` users.
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+head(dat.muestra)
+
+pelis.nombres <- read.csv('./Data/movies_title_fix.csv', stringsAsFactors = FALSE, header=FALSE)
+names(pelis.nombres) <- c('peli_id','release','nombre')
+head(pelis.nombres)
+```
+
+We choose a random sample of movies and users to use as training and test samples.
+
+```{r}
+set.seed(28882)
+valida_usuarios <- sample(unique(dat.muestra$usuario_id), 20000 )
+valida_pelis <- sample(unique(dat.muestra$peli_id), 2000 )
+dat.2 <- dat.muestra %>%
+  mutate(valida_usu = usuario_id %in% valida_usuarios) %>%
+  mutate(valida_peli = peli_id %in% valida_pelis)
+
+dat.entrena <- filter(dat.2, !valida_usu | !valida_peli)
+dat.valida <- filter(dat.2, valida_usu & valida_peli)
+
+```
+
+We modify the data frame so it has the centered grade for each movie.
+
+```{r}
+dat.entrena.c <- dat.entrena %>%
+  group_by(usuario_id) %>%
+  mutate(calif.c = calif - mean(calif))
+dat.entrena.c$id_seq <- as.numeric(factor(dat.entrena.c$usuario_id))
+
+medias.peliculas <- dat.muestra %>% group_by(peli_id) %>% summarise(media_peli = mean(calif), num_calif_peli = length(calif))
+medias.p.2 <- left_join(medias.peliculas, pelis.nombres)
+```
+
+We use a random sample of users with not few graded movies. This way we're gonna create a latent dimension for a small sample of movies
+
+```{r}
+users <- dat.entrena.c %>% group_by(usuario_id) %>%summarise(n_us=n()) %>% filter(n_us>=200) %>% sample_n(size=100)
+a<-left_join(users, dat.entrena.c)
+movies <- a %>% group_by(peli_id) %>%summarise(n_peli=n()) %>% filter(n_peli>=20) %>% sample_n(size=180)
+rm(a)
+users<-users$usuario_id
+movies<-movies$peli_id
+#Usar películas que los usuarios hayan calificado
+
+muestra_chica <-  left_join(dat.entrena.c, medias.p.2) %>% 
+                  filter(peli_id %in% movies, id_seq %in% users) %>% 
+                  select(peli_id, id_seq, calif, nombre)
+head(muestra_chica)
+head(unique(muestra_chica$nombre), 10)
+```
+
+Base model predictions.
+
+```{r}
+m_1 <- muestra_chica %>% group_by(peli_id) %>% mutate(media.p = mean(calif)) %>%
+  group_by(id_seq) %>% mutate(media.u = mean(calif)) %>%
+  ungroup %>% mutate(media.t = mean(calif))
+m_1$p_id <- as.numeric(factor(m_1$peli_id))
+m_1$u_id <- as.numeric(factor(m_1$id_seq))
+m_1$usuario_id <- NULL
+m_1$peli_id <- NULL
+head(m_1)
+m_1$pred_base <- m_1$media.p + m_1$media.u - m_1$media.t
+ggplot(m_1, aes(x=pred_base, y=calif, colour=factor(calif))) + geom_jitter()
+```
+
+Residuals.
+
+```{r}
+m_1$res <- m_1$calif - m_1$pred_base
+X <- as.matrix(m_1[, c('u_id','p_id','res')])
+X[1:10,]
+```
+
+```{r}
+error_1 <- function(params){
+  u <- params[1:100]
+  v <- params[101:280]
+  ## construir ajustados
+  ajuste <- apply(X, 1, function(x){ 
+    u[x['u_id']] * v[x['p_id']]  
+    })
+  ## calcular error
+  salida <- mean((m_1$res -ajuste)^2)
+  salida
+}
+
+grad_1 <- function(params){
+  u <- params[1:100]
+  v <- params[101:280]
+  grad <- rep(0,280)
+  for(i in 1:100){
+    X.u <- X[X[,'u_id']==i,, drop=FALSE]
+    grad[i] <- -2*mean((X.u[,'res'] - u[i]*v[X.u[,'p_id']])*v[X.u[,'p_id']]) 
+  }
+  for(j in 1:180){
+     X.p <- X[X[,'p_id']==j, , drop=FALSE]
+    grad[j+100] <- -2*mean((X.p[,'res'] - u[X.p[,'u_id']]*v[j])*u[X.p[,'u_id']])
+  }
+  grad[is.nan(grad)] <-0
+  grad
+}
+
+
+library(compiler)
+error_c <- cmpfun(error_1)
+grad_c <- cmpfun(grad_1)
+set.seed(2120)
+inicial <- rnorm(length(movies)+length(users),0,0.1)
+res <- optim(inicial, fn=error_c, gr=grad_c, method='BFGS',control=list(trace = TRUE, maxit=200))
+```
+
+Let's examine the movies in the first latent factor.
+
+```{r}
+usuarios.nr <- data.frame(X) %>% group_by(u_id) %>% tally
+usuarios.nr$coef <- res$par[1:nrow(usuarios.nr)]
+
+xx <- unique(m_1[,c('p_id','nombre')])
+xx$dim.1 <- res$par[101:278]
+xx %>% arrange(dim.1) %>% data.frame()
+```
+
+
+

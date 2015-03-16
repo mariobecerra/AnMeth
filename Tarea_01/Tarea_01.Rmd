@@ -1,0 +1,155 @@
+---
+title: "Homework 1"
+author: "Mario Becerra"
+output: html_document
+---
+#Market Basket Analysis of recipes around the world
+
+In this work, a market basket analysis is made on a dataset containing recipes from around the world and their ingredients.
+
+```{r setup}
+library(ggplot2)
+library(arules)
+library(arulesViz)
+library(dplyr)
+```
+
+```{r, echo=FALSE}
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_01')
+```
+
+```{r}
+load(file='./Tarea01_baskets.RData')
+```
+
+The file *Tarea01_baskets.RData* contains a long list of ingredients used in different recipes around the world. The format is:
+
+1. **id**: The id of each recipe. Each recipe has a unique id.
+
+2. **region**: The world region from which the recipe comes from.
+
+3. **ing**: The ingredients for each recipe.
+
+```{r}
+head(baskets, 10)
+```
+
+This list was created from a previous file containing all the recipes in a different format.
+
+```{r, eval=FALSE}
+datos <- read.csv('./Notas LuisFe/clase_1_mbasket/datos/srep00196-s3.csv')
+baskets <- lapply(seq(nrow(datos)), function(i){ 
+    b <- as.vector(as.matrix(datos[i,2:31]))
+    data.frame(id = i, region=datos[i,1],  ing = b[b!=""] )}) %>%
+    rbind_all
+```
+
+Returning to the *baskets* object. The total number of ingredients in the dataset is `r length(unique(baskets$ing))`.
+
+It is of interest to inspect the most common baskets for a particular region, not the whole world. To do this we write each in a separate text file so it can be further read with the *read.transactions* function from the package **arules**.
+
+```{r, eval=FALSE}
+write.table(baskets[baskets$region=='African', c(1,3)], file='./baskets_African.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='LatinAmerican', c(1,3)], file='./baskets_LatinAmerican.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='EastAsian',c(1,3)], file='./baskets_EastAsian.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='EasternEuropean',c(1,3)], file='./baskets_EasternEuropean.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='MiddleEastern',c(1,3)], file='./baskets_MiddleEastern.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='NorthAmerican',c(1,3)], file='./baskets_NorthAmerican.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='NorthernEuropean',c(1,3)], file='./baskets_NorthernEuropean.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='SouthAsian',c(1,3)], file='./baskets_SouthAsian.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='SoutheastAsian',c(1,3)], file='./baskets_SoutheastAsian.csv', sep=',', row.names=FALSE)
+            
+write.table(baskets[baskets$region=='SouthernEuropean',c(1,3)], file='./baskets_SouthernEuropean.csv', sep=',', row.names=FALSE)
+
+write.table(baskets[baskets$region=='WesternEuropean',c(1,3)], file='./baskets_WesternEuropean.csv', sep=',', row.names=FALSE)
+```
+
+Here, we just focus on the Latin American recipes, so that's the file we'll load and analyze.
+
+We remove from memory the previous object *baskets* containing the world wide baskets.
+
+```{r}
+rm(baskets)
+```
+
+We read the Latin American recipes file and find the 20 most frequent items by using the *apriori* algorithm.
+
+```{r}
+transac_LA <- read.transactions('./baskets_LatinAmerican.csv', format='single', cols=c(1,2), sep=',')
+ap.1 <- apriori(transac_LA, parameter = list(minlen=1, maxlen=1, target='frequent itemsets'))
+inspect(sort(ap.1, by='support'))
+```
+
+We see that the most frequent items are cayenne, onion, garlic, tomato and corn; which may not be a big surprise because these items are frequently used in Latin American cuisine.
+
+We now find the most frequent itemsets containing two items.
+
+```{r}
+ap.2 <- apriori(transac_LA, parameter = list(minlen=2, maxlen=2, target='frequent itemsets'))
+inspect(sort(ap.2, by='support')[1:30])
+```
+
+We see that a lot of those itemsets include onion, garlic and tomato; this is pretty obvious and intuitive because the most frequent items were precisely cayenne, onion, garlic, tomato and corn.
+
+Now we find frequent itemsets containing three items.
+
+```{r}
+ap.3 <- apriori(transac_LA, parameter = list(minlen=3, maxlen=3, target='frequent itemsets'))
+inspect(sort(ap.3, by='support')[1:30])
+```
+
+Again, no surprises here. The same items appear here, and most of them are spices typically used in Latin Americam cuisine.
+
+In order to see a little deeper in these relations, we create association rules and filter those that have an itemset with a support bigger that 0.01 and confidence bigger than 0.3.
+
+Let's recall that support of an itemset is simply the ratio of baskets in which that particular itemset appears, and the confidence of a rule ($S \to A$) is the number of baskets in which S and A appear divided by the number of baskets in which S appears.
+
+```{r}
+rules.1 <- apriori(transac_LA, 
+                parameter = list(support = 0.01, confidence=0.20, target='rules'))
+inspect(sort(rules.1, by='confidence')[1:20])
+```
+
+This means that if a recipe has celery oil, it may also include corn, tomato or garlic. This may not be very interesting because we are watching the same ingredients over and over; and that's because they are the most common items. A ore interesting value may be the lift of the rules.
+
+The lift of a rule $S\to A$ is defined as $L(S\to a) = \frac{P(S\to a)}{P(a)}$. Bigger values of lift can be interpreted as a stronger dependency between $S$ and $A$. This may happen even if the itemsets aren't the most repeated in the dataset.
+
+```{r}
+inspect(sort(rules.1, by='lift')[1:20])
+```
+
+Here we find stronger dependencies, although the most common items keep appearing. Now we can say that these associations are stronger because we are ordering them by their lift.
+
+We may also be interested in just a particular item, like cheese.
+
+```{r}
+rules.cheese <- subset(rules.1, lift>1 & lhs %pin% 'cheese' )
+inspect(sort(rules.cheese, by='lift')[0:20])
+```
+
+We finally create a last set of rules to analyze them visually. We filter rules with a high support and a relatively high confidence; and save the object as a graph to visualize it in another software.
+
+```{r}
+rules.2 <- apriori(transac_LA, 
+                parameter = list(support = 0.01, confidence=0.01, minlen=2,maxlen=2,
+                                 target='rules', ext=TRUE))
+rules.f <- subset(rules.2, lift > 3 & lhs.support > 0.01)
+saveAsGraph(rules.f, file='rules.gml', format="gml", type='itemsets')
+```
+
+
+
+
+
+
+
+
+

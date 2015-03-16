@@ -1,0 +1,35 @@
+sudo update-alternatives --config libblas.so.3
+cat R-benchmark-25.R | time R --slave
+http://www.stat.cmu.edu/~nmv/2013/07/09/for-faster-r-use-openblas-instead-better-than-atlas-trivial-to-switch-to-on-ubuntu/#comment-86
+
+0)
+
+Total time for all 15 tests_________________________ (sec):  22.4736666666667 
+Overall mean (sum of I, II and III trimmed means/3)_ (sec):  1.40474585125245 
+                      --- End of test ---
+
+
+1)
+
+Total time for all 15 tests_________________________ (sec):  22.0296666666666 
+Overall mean (sum of I, II and III trimmed means/3)_ (sec):  1.2767115112458 
+                      --- End of test ---
+
+113.73user 0.90system 1:56.58elapsed 98%CPU (0avgtext+0avgdata 401832maxresident)k
+11600inputs+0outputs (29major+97508minor)pagefaults 0swaps
+
+2)
+
+Total time for all 15 tests_________________________ (sec):  80.5086666666666 
+Overall mean (sum of I, II and III trimmed means/3)_ (sec):  2.49658556409813 
+                      --- End of test ---
+
+390.60user 3.03system 6:37.75elapsed 98%CPU (0avgtext+0avgdata 394704maxresident)k
+808inputs+0outputs (2major+103967minor)pagefaults 0swaps
+
+3)
+
+Total time for all 15 tests_________________________ (sec):  32.1523333333333 
+Overall mean (sum of I, II and III trimmed means/3)_ (sec):  1.43348934361461 
+                      --- End of test ---
+

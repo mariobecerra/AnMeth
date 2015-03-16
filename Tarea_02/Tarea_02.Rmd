@@ -1,0 +1,255 @@
+---
+title: "Homework 2"
+author: "Mario Becerra"
+date: "06/02/2015"
+output: html_document
+---
+#Similarity Analysis of Mexican News
+
+In this work, a similarity analysis is made on a dataset containing mexican news from different newspapers. Most of the news are in Spanish, but some may be in Spanish. The final objective is to obtain a set of similar news; similiar in a strictly textual fashion, not necessarily on subject or sentiment. This is done by using an approximation to the Jaccard distance.
+
+```{r, echo=FALSE}
+setwd('/home/mbc/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_02')
+```
+
+First, we load the set of news.
+
+```{r setup}
+news <- read.csv('news.csv', colClasses=c('NULL', 'character'), header=F, col.names=c('NULL', 'Cont'), quote="\"")
+head(news, 4)
+```
+
+We have `r nrow(news)` documents in total. We will now proceed to create a *shingle* function. This function will return a character vector containing the the k-shingles of a text.
+
+```{r}
+shingles <- function(text, k){
+     if(nchar(text) < k ){
+         stop('Document is too short')
+     } 
+     else{
+         shingles.1 <- lapply(1:(nchar(text) - k +1), function(i){
+             substr(text, start = i, stop = i + k -1)
+         })
+     }
+     unique(Reduce('c', shingles.1))
+}
+```
+
+An example of this function:
+
+```{r}
+shingles('Example', 2)
+```
+
+
+And now, we load the shingle-document file that we created previously with the following code. This file contains close to a million and a half $6$-shingles from the *news* dataframe.
+
+```{r, eval=FALSE}
+file <- 'news.csv'
+file_out <- 'shingles.txt'
+con <- file(file,'r')
+con_out <- file(file_out, 'w')
+line <- readLines(con, 1)
+doc_no <- 1
+news_list <- list()
+while (length(line) > 0){
+  news_list[doc_no] <- line #To keep the news in a list
+  if (nchar(line) < 6){
+    line <- paste0(line, paste0(rep(' ',6-nchar(line)), collapse=""), collapse="")
+  }
+  #compute shingles
+  shingles.1 <- shingles(line, 6)
+  #write shingles
+    for(shingle in shingles.1){
+        write(as.character(c(shingle, doc_no)), file=con_out,  append=T, ncolumns = 2, sep=" ")
+    }  
+    #read new document
+    line <- readLines(con, 1)
+    doc_no <- doc_no + 1
+}
+close(con)
+close(con_out)
+```
+
+Now, on the Unix command line, we will sort the shingles: `sort shingles.txt -o shingles_ord.txt`.
+
+Now, we choose hash-functions. To to this we have to know the exact number of different shingles there are in the *shingles_ord* file in the command line by typing `sort shingles.txt -o shingles_ord.txt `, and we see that there are $756405$ different shingles; then, we find the next bigger prime number to use in the hash functions. To do this we use the *find_next_prime* function.
+
+```{r}
+library(matlab)
+find_next_prime <- function(n){
+  if(isprime(n)){
+    n=n+1
+  }
+  i=0
+  k=n
+  while(!isprime(n+i)){
+    i=i+1
+    k=n+i
+  }
+k
+}
+shing<-756405
+prime<-find_next_prime(shing)
+```
+
+We define the hash functions.
+
+```{r}
+set.seed(2805)
+hash.list <- lapply(1:200, function (i){
+  a <- sample(1:(prime-1), 1)
+  b <- sample(1:(prime-1), 1)
+  function (x){
+    (((a*(x-1) + b) %% prime) %% shing) + 1
+  }
+})
+```
+
+Now we use a function created in C++ previously created, the code is shown below. Then, we load it with the *Rcpp* package. This function updates the signaure matrix. 
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+// source this function into an R session using the Rcpp::sourceCpp function (or via the Source button on the editor toolbar)
+
+// [[Rcpp::export]]
+int update_mat(NumericMatrix x, int doc_no, NumericVector h) {
+   int nrow = x.nrow();
+   int ncol = x.ncol();
+   for(int i =0; i < nrow; i++){
+       if(h[i] < x( i,doc_no - 1)){
+            x(i,doc_no - 1) =  h[i];
+       }
+   }
+   return 1;
+}
+```
+
+```{r}
+library(Rcpp)
+sourceCpp('./update_mat.cpp')
+```
+
+We now create a function that will do minhashing to the shingles we have.
+
+```{r, eval=FALSE}
+minhash_2 <- function(file, no_documents, hash.list, k){
+    con <- file(file,'r')
+    line <- readLines(con, 1)
+    shingle_no <- 1
+    current_shingle <- substr(line, 1, k)
+    
+    n_hashes <- length(hash.list)
+    sig <- matrix(rep(Inf, no_documents*n_hashes), ncol = no_documents)
+    hash_row <- sapply(hash.list, function(h) h(1))
+
+    while(length(line) > 0){
+        document <- as.integer(substr(line, 8, 15))
+        ## update the signature matrix
+        out <- update_mat(sig, document, hash_row)  
+        line <- readLines(con, 1)
+        shingle <- substr(line, 1, k) 
+        if(length(shingle)>0){
+            if(shingle != current_shingle){
+              if(shingle_no %% 10000 ==0){
+                  print(shingle_no)
+              }
+              shingle_no <- shingle_no + 1
+              current_shingle <- shingle
+              hash_row <- sapply(hash.list, function(h) h(shingle_no))
+            }
+        }
+    }
+    close(con)
+    sig
+}
+```
+
+```{r, eval=FALSE}
+system.time(signatures <- minhash_2(file ='./shingles_ord.txt', no_documents=nrow(news)+2, hash.list=hash.list, k=6))
+save(signatures, file='./signatures.Rdata')
+```
+
+```
+   user   system  elapsed 
+1306.175   19.785 1398.747 
+```
+
+```{r}
+load(file='./signatures.Rdata')
+dim(signatures)
+```
+
+We can find news similar to the first article.
+
+```{r}
+doc.ind <- 1
+news[doc.ind,]
+doc.1.sig <- signatures[,doc.ind]
+sim_est <- apply(signatures, 2, function(x){mean(x==doc.1.sig)})
+tail(sort(sim_est))
+```
+
+We can see that the biggest Jaccard similarities are around `r tail(sort(sim_est), 1)`, which isn't so big. We can see the 10 most similar documents to document 1.
+
+```{r}
+docs.sim <- which(sim_est>=0.004)
+as.data.frame(news[docs.sim,])[1:10,]
+```
+
+They aren't so alike. Let's see if by doing Local Sensitive Hashing (LSH) we can find pairs of more similar documents.
+
+```{r}
+mat.split <- split(data.frame((signatures)), rep(1:20, each=10))
+mat.hashed <- sapply(mat.split, function(mat){
+    apply(mat, 2, function(x){   sum(x) })
+})
+mat.hashed <- data.frame(mat.hashed)
+mat.hashed$doc_no <- 1:nrow(mat.hashed)
+tab.1 <- table(mat.hashed[mat.hashed<Inf,1])
+codes <- as.integer(names(tab.1[tab.1 >= 2]))
+length(codes)
+```
+
+```{r}
+cands <- lapply(1:20, function(i){
+    tab.1 <- table(mat.hashed[mat.hashed<Inf,i])
+    codes <- as.integer(names(tab.1[tab.1 >= 2 & tab.1<Inf]))
+    out <- lapply(codes, function(cod){ 
+        mat.hashed$doc_no[mat.hashed[,i] == cod]
+    })
+   Reduce('cbind',lapply(out, function(x){combn(x,2)}))
+})
+cands.tot <- t(Reduce('cbind',cands))
+cands.tot.2 <- unique(cands.tot)
+dim(cands.tot.2)
+```
+
+We now compute the exact similarity and then filter.
+
+```{r, warning=FALSE}
+sim.jaccard <- function(a, b){
+    length(intersect(a, b)) / length(union(a, b))
+}
+
+sims.cand <- apply(cands.tot.2, 1, function(x){
+    #print(x)
+    shin.1 <- shingles(news[x,],6)
+    shin.2 <- shingles(news[x,],6)
+    sim.jaccard(shin.1, shin.2)
+})
+out <- cbind(cands.tot.2, sims.cand)
+out <- out[order(out[,1]),]
+out_high <- out[out[,3]> 0.9,]
+head(out_high)
+a<-out_high[1:10,1:2]
+b<-cbind(news[a[,1],], news[a[,2],])
+for (i in 1:nrow(b)){
+  print(b[i,])
+}
+```
+
+
+
+

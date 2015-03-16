@@ -1,0 +1,25 @@
+---
+title: "Tarea 04 USAirports"
+author: "Mario Becerra 124362"
+date: "15/03/2015"
+output: html_document
+---
+
+```{r, echo=FALSE}
+setwd("~/Dropbox/ITAM_Dropbox/Métodos Analíticos/Tareas_Git/Tarea_04")
+```
+
+
+```{r}
+library(igraph)
+library(dplyr)
+load('USairports.rda')
+adj <- get.adjacency(USairports)
+air_df <- get.data.frame(USairports)
+df <- group_by(air_df, from, to) %>% summarise(count=n(), weight=sum(Departures))
+graph_w <- graph.adjacency(adj, mode='directed', weighted=TRUE)
+E(graph_w)$weight <- df$weight
+#graph <- graph.data.frame(df)
+write.graph(graph_w, file='Airports_weighted.gml', format='gml')
+```
+
