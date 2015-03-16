@@ -1,6 +1,6 @@
 $ cat .gitignore
 
-# Can ignore specific files
-
-# Can also ignore all directories and files in a directory.
 Tarea_03/Data/*
+*.Rhistory
+/examen_1/Data/*
+/examen_1/LuisFe/*
