@@ -145,7 +145,7 @@ minhash_2 <- function(file, no_documents, hash.list, k){
     hash_row <- sapply(hash.list, function(h) h(1))
 
     while(length(line) > 0){
-        document <- as.integer(substr(line, 8, 15))
+        document <- as.integer(substr(line, k+2, 15))
         ## update the signature matrix
         out <- update_mat(sig, document, hash_row)  
         line <- readLines(con, 1)
