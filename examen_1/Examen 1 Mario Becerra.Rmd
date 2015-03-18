@@ -5,7 +5,7 @@ date: "16/03/2015"
 output: html_document
 ---
 
-#Parte 1: correos de Enron, similitud y minhashing.
+##Parte 1: correos de Enron, similitud y minhashing.
 
 En este ejemplo, mediante minhashing/Locality-Sensitive Hashing, construiremos una aplicación para devolver rápidamente correos similares a uno dado, en el sentido de que contienen palabras similares.
 
@@ -177,7 +177,7 @@ save(candidatos.tot.2, file='./Data/candidatos.tot.2.Rdata')
 load('./Data/candidatos.tot.2.Rdata')
 ```
 
-Tenemos un total de `r dim(candidatos.tot.2)[1]` pares candidatos a similitud. Se pueden ver los primeros 6 pares a continuación.
+Tenemos un total de $`r dim(candidatos.tot.2)[1]`$ pares candidatos a similitud. Se pueden ver los primeros 6 pares a continuación.
 
 ```{r}
 head(candidatos.tot.2)
@@ -193,7 +193,7 @@ sum(sapply(mails, function(i) sum(candidatos.tot.2==i)))
 
 Para los pares candidatos vamos a calcular la similitud de Jaccard exacta.
 
-```{r}
+```{r, cache=TRUE}
 temp <- data.frame(candidatos.tot.2)
 cand_100 <- filter(temp, (temp[,1]==100 | temp[,2]==100))
 cand_105 <- filter(temp, (temp[,1]==105 | temp[,2]==105))
@@ -207,11 +207,119 @@ similitudes_1400 <- sapply(1:nrow(cand_1400), function(i) jaccard(filter(enron, 
 
 La similitud de Jaccard exacta para todos los pares candidatos se puede ver a continuación.
 
-```{r}
-arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))
-arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))
-arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))
+```{r, cache=TRUE}
+arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))[1:20,]
+arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))[1:20,]
+arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))[1:20,]
 ```
+
+Vamos ahora a ver la distribución de palabras en cada uno de los *clusters* calculados anteriormente.
+
+```{r, message=FALSE, cache=TRUE}
+dist_100 <- filter(enron, doc %in% c(100,cand_100[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_100$prop <- 100*dist_100$n_tot/sum(dist_100$n_tot)
+dist_105 <- filter(enron, doc %in% c(105,cand_105[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_105$prop <- 100*dist_105$n_tot/sum(dist_105$n_tot)
+dist_1400 <- filter(enron, doc %in% c(1400,cand_1400[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)  
+dist_1400$prop <- 100*dist_1400$n_tot/sum(dist_1400$n_tot)
+```
+
+Palabras más comunes en el *cluster* del mail número 100.
+
+```{r, cache=TRUE}
+dist_100[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 105.
+
+```{r, cache=TRUE}
+dist_105[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 1400.
+
+```{r, cache=TRUE}
+dist_1400[1:30,]
+```
+
+Ahora graficamos la distribución de la proporción de palabras en cada *cluster*. Se puede ver que los tres tienen una distribución muy parecida, que además tiende a parecerse a una distribución de Zipf, la cual muchas veces se usa para describir la distribución de las palabras en el lenguaje inglés (y otros también).
+
+```{r, cache=TRUE}
+plot(dist_100$prop, type='l', ylab='Porcentaje (0 a 100)')
+lines(dist_105$prop, type='l', col='dark blue')
+lines(dist_1400$prop, type='l', col='dark green')
+```
+
+##Parte 2: Aplicación a búsqueda de items populares
+
+Implementaremos una búsqueda de items populares en una muestra de películas de Netflix para mostrar las 15 películas más populares en enero de 2000, junio de 2000 y enero de 2001. Para esto utilizaremos suavizamiento exponencial.
+
+```{r}
+load('./Data/netflix/dat_muestra_nflix.Rdata')
+titulos <- read.csv('./Data/netflix/movies_title_fix.csv', header=FALSE)
+names(titulos) <- c('peli_id', 'year', 'title')
+vistas_ene2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-01')
+vistas_jun2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-06')
+vistas_ene2001 <- filter(dat.muestra, substr(fecha, 1, 7)=='2001-01')
+write.csv(vistas_ene2000$peli_id, file='./Out/vistas_ene2000.csv', row.names = FALSE)
+write.csv(vistas_jun2000$peli_id, file='./Out/vistas_jun2000.csv', row.names = FALSE)
+write.csv(vistas_ene2001$peli_id, file='./Out/vistas_ene2001.csv', row.names = FALSE)
+```
+
+Script en python que hace el suavizamiento exponencial.
+
+```
+import csv
+lista = {}
+c = 1/15
+fnames = ['./Out/vistas_ene2000.csv','./Out/vistas_jun2000.csv','./Out/vistas_ene2001.csv']
+for fname in fnames:
+    with open(fname) as f:
+        encabezado = f.readline()
+        for line in f:
+            item = line.strip('\n')
+            for key in lista:
+                lista[key] = lista[key]*(1-c)
+                if(key==item):
+                    lista[key] = lista[key] + c
+            if(not (item in lista.keys())):
+                lista[item] = c
+            lista = {k:v for(k, v) in lista.iteritems() if v >= c/2}         
+    with open(fname+'_lista_out.csv', 'wb') as f: 
+        w = csv.writer(f)
+        w.writerows(lista.items())
+```
+
+
+```{r, eval=FALSE}
+system('python suav_exp.py')
+```
+
+```{r}
+lista_ene2000 <- read.csv('./Out/vistas_ene2000.csv_lista_out.csv', header=FALSE)
+names(lista_ene2000) <- c('peli_id','score')
+lista_ene2000_2 <- left_join(lista_ene2000, titulos)
+
+lista_jun2000 <- read.csv('./Out/vistas_jun2000.csv_lista_out.csv', header=FALSE)
+names(lista_jun2000) <- c('peli_id','score')
+lista_jun2000_2 <- left_join(lista_jun2000, titulos)
+
+lista_ene2001 <- read.csv('./Out/vistas_ene2001.csv_lista_out.csv', header=FALSE)
+names(lista_ene2001) <- c('peli_id','score')
+lista_ene2001_2 <- left_join(lista_ene2001, titulos)
+```
+
+```{r}
+lista_ene2000_2
+lista_jun2000_2
+lista_ene2001_2
+```
+
+
+
 
 
 
