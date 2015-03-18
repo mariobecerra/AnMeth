@@ -1,6 +1,6 @@
 import csv
 lista = {}
-c = 1/15
+c = 0.001
 fnames = ['./Out/vistas_ene2000.csv','./Out/vistas_jun2000.csv','./Out/vistas_ene2001.csv']
 for fname in fnames:
     with open(fname) as f:

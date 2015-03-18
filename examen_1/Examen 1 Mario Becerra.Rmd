@@ -144,20 +144,16 @@ palabras
 
 El siguiente paso es encontrar, entre todos los posibles mails, pares de ellos que tienen alto grado de similitud. Aún cuando hemos reducido la dimensionalidad del problema, calcular todos los posibles pares de similitudes es infactible, por eso lo que haremos es usar *Locality-Sensitive Hashing* (LSH), el cual es una especie de *clustering* de datos; esto se logra asignando los documentos a una colección de cubetas de forma que documentos con alta similitud caen en la misma cubeta.
 
-Utilizaremos 8 bandas de 2 hashes cada una para obtener pares candidatos para similitud y posteriormente devolver los 20 mejores candidatos para los documentos 100, 105 y 1400.
+Utilizaremos 8 bandas de 25 hashes cada una para obtener pares candidatos para similitud y posteriormente devolver los 20 mejores candidatos para los documentos 100, 105 y 1400.
 
 ```{r, cache=TRUE}
-#b=8; r=2;
-b=20; r=10;
+b=8; r=25;
 mat.split <- split(data.frame((firmas)), rep(1:b, each=r))
 mat.hashed <- sapply(mat.split, function(mat){
     apply(mat, 2, function(x){sum(x)})
 })
 mat.hashed <- data.frame(mat.hashed)
 mat.hashed$doc_no <- 1:nrow(mat.hashed)
-# tab.1 <- table(mat.hashed[,1])
-# codigos <- as.integer(names(tab.1[tab.1 >= 15]))
-# length(codigos)
 ```
 ```{r, eval=FALSE}
 candidatos <- lapply(1:b, function(i){
@@ -188,7 +184,7 @@ Como nos interesan en particular los mails parecidos a los mails $100$, $105$ y 
 
 ```{r}
 mails <- c(100,105,1400)
-sum(sapply(mails, function(i) sum(candidatos.tot.2==i)))
+sapply(mails, function(i) sum(candidatos.tot.2==i))
 ```
 
 Para los pares candidatos vamos a calcular la similitud de Jaccard exacta.
@@ -208,9 +204,9 @@ similitudes_1400 <- sapply(1:nrow(cand_1400), function(i) jaccard(filter(enron, 
 La similitud de Jaccard exacta para todos los pares candidatos se puede ver a continuación.
 
 ```{r, cache=TRUE}
-arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))[1:20,]
-arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))[1:20,]
-arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))[1:20,]
+arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))
+arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))
+arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))
 ```
 
 Vamos ahora a ver la distribución de palabras en cada uno de los *clusters* calculados anteriormente.
@@ -293,7 +289,6 @@ for fname in fnames:
         w.writerows(lista.items())
 ```
 
-
 ```{r, eval=FALSE}
 system('python suav_exp.py')
 ```
@@ -312,10 +307,22 @@ names(lista_ene2001) <- c('peli_id','score')
 lista_ene2001_2 <- left_join(lista_ene2001, titulos)
 ```
 
+De esta forma tenemos que las películas más populares de enero de 2000 en nuestra submuestra son:
+
 ```{r}
-lista_ene2000_2
-lista_jun2000_2
-lista_ene2001_2
+arrange(lista_ene2000_2,score)[1:15,3:4]
+```
+
+En junio de 2000:
+
+```{r}
+arrange(lista_jun2000_2,score)[1:15,3:4]
+```
+
+Y en enero de 2001:
+
+```{r}
+arrange(lista_ene2001_2,score)[1:15,3:4]
 ```
 
 
