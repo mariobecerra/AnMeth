@@ -1,0 +1,727 @@
+---
+title: "Examen 1 (Métodos Analíticos)"
+author: "Mario Becerra 124362"
+date: "16/03/2015"
+output: html_document
+---
+
+##Parte 1: correos de Enron, similitud y minhashing.
+
+En este ejemplo, mediante minhashing/Locality-Sensitive Hashing, construiremos una aplicación para devolver rápidamente correos similares a uno dado, en el sentido de que contienen palabras similares.
+
+Utilizaremos los datos de correo de Enron de https://archive.ics.uci.edu/ml/datasets/Bag+of+Words. 
+
+```{r setup, message=FALSE}
+options(digits=4)
+library(dplyr)
+library(tidyr)
+library(Matrix)
+library(Rcpp)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+```{r, message=FALSE, cache=TRUE}
+enron <- read.table('./Data/enron/docword.enron.txt', skip=3, header=FALSE, sep=' ')
+names(enron) <- c('doc','word_id','n')
+head(enron)
+vocab <- read.table('./Data/enron/vocab.enron.txt', header=FALSE)
+vocab$word_id <- 1:nrow(vocab)
+head(vocab)
+enron <- arrange(enron, word_id)
+```
+
+Usaremos similitud de Jaccard basada en el modelo bag of words para documentos, es decir, solo en función de las palabras que contienen: la similitud entre el documento A y B es el número de palabras en común dividido entre el número total de palabras que ocurren en los dos documentos. Aquí hay una implementación simple:
+
+```{r, cache=TRUE}
+jaccard <- function(doc1, doc2){
+  a <- length(union(doc1$word_id, doc2$word_id))
+  c <- length(intersect(doc1$word_id, doc2$word_id))
+  c/a
+}
+jaccard(filter(enron, doc==1), filter(enron, doc==2))
+```
+
+Tenemos una colección de `r length(unique(enron$doc))` mails cargados en forma de lista larga.
+
+El objetivo ahora es construir una matriz de firmas de minhashing para esta colección y utilizar esta matriz de firmas para encontrar mails similares al 900 (con más de 50% de similitud de Jaccard).
+
+Definimos primero la función hash. Tendremos 200 hashes en total, así que la matriz de firmas tendrá dimensión $200 \times `r length(unique(enron$doc))`$.
+
+```{r, eval=FALSE}
+set.seed(2805)
+hash.lista <- lapply(1:200, function(i){
+    primo <- length(unique(enron$word_id))
+    a <- sample(1:(primo-1), 1)
+    b <- sample(1:(primo-1), 1)
+    function(x){
+        ((a*(x-1) + b) %% primo)  + 1
+    }
+})
+```
+
+La siguiente función (*update_mat*), escrita en C++ para mejorar el desempeño, actualiza la matriz de firmas de acuerdo al siguiente algoritmo:
+
+Supongamos que tenemos $h_1,...,h_m$ funciones hash.
+
+Definimos inicialmente la matriz sig de firmas como $sig(i,c)=\infty$.
+
+* Para cada renglón $r$ (palabra):
+
+    * Para cada documento $c$ (columna)
+
+        * Si c tienen un valor mayor a $0$ en el renglón r, entonces para cada función hash $h_i$, si $h_i(r)$ es menor a $sig(i,c)$, entonces $sig(i,c)=hi(r)$.
+
+Al final del algoritmo, $sig$ es la matriz de firmas de los documentos bajo las funciones hash $h_1,...,h_m$.
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+// source this function into an R session using the Rcpp::sourceCpp 
+// function (or via the Source button on the editor toolbar)
+
+// [[Rcpp::export]]
+int update_mat(NumericMatrix x, NumericVector doc, NumericVector h) {
+   int nrow = x.nrow();
+   int ncol = doc.size();
+   for(int i =0; i < nrow; i++){
+     	for(int j =0; j < ncol; j++){
+       		if(h[i] < x( i,doc[j]-1)){
+            	x(i,doc[j]-1) =  h[i];
+            }
+       }
+   }
+   return 1;
+}
+```
+Ahora, el siguiente código ejecuta todo el algoritmo y crea la matriz de firmas.
+
+```{r, eval=FALSE}
+library(Rcpp)
+sourceCpp('./update_mat.cpp')
+minhash <- function(dat, hash.lista){
+    n_words <- length(unique(enron$word_id))
+    n_docs <- length(unique(enron$doc))
+    p <- length(hash.lista)
+    sig <- matrix(rep(Inf, p*n_docs) , ncol = n_docs)
+    for(i in 1:n_words){
+    #for(i in 1:10){
+      hash_row <- sapply(hash.lista, function(h) h(i))
+      document <- enron$doc[which(enron$word_id==i)]
+      out <- update_mat(sig, document, hash_row)  
+      print(i)
+    }
+    sig
+}
+
+firmas <- minhash(enron,hash.lista)
+save(firmas, file='./Data/firmas.Rdata')
+```
+
+Encontramos ahora los mails similares al mail 900.
+
+```{r}
+load('./Data/firmas.Rdata')
+doc.1.firma <- firmas[,900]
+sim_est <- apply(firmas, 2, function(x){mean(x==doc.1.firma)})
+docs.sim <- which(sim_est>=0.5)
+docs.sim <- docs.sim[docs.sim!=900]
+sim_est[(sim_est>=0.5 & sim_est<1)]
+docs.sim
+```
+Podemos ver que los documentos que mayor similitud tienen al mail 900 tienen similitudes aproximadas de Jaccard de `r sim_est[(sim_est>=0.5 & sim_est<1)]`, y corresponden a los documentos `r docs.sim`.
+
+Ya que redujimos los candidatos a documentos similares, podemos calcular las verdaderas similitudes de Jaccard sin miedo al tiempo pues solo hay que calcular `r length(docs.sim)` similitudes. Estas similitudes se pueden ver a continuación.
+
+```{r, cache=TRUE}
+similitudes <- sapply(docs.sim, function(i) jaccard(filter(enron, doc==900), filter(enron, doc==i)))
+cbind(docs.sim, similitudes)
+```
+
+Podemos ver qué palabras son las que tienen en común cada mail similar con el mail 900.
+
+```{r, cache=TRUE}
+inter_palabras <- function(doc1, doc2){
+  a <- intersect(doc1$word_id, doc2$word_id)
+  as.character(vocab[a,1])
+}
+palabras <- sapply(docs.sim, function(i) inter_palabras(filter(enron, doc==900), filter(enron, doc==i)))
+```
+```{r}
+palabras
+```
+
+El siguiente paso es encontrar, entre todos los posibles mails, pares de ellos que tienen alto grado de similitud. Aún cuando hemos reducido la dimensionalidad del problema, calcular todos los posibles pares de similitudes es infactible, por eso lo que haremos es usar *Locality-Sensitive Hashing* (LSH), el cual es una especie de *clustering* de datos; esto se logra asignando los documentos a una colección de cubetas de forma que documentos con alta similitud caen en la misma cubeta.
+
+Utilizaremos 8 bandas de 2 hashes cada una para obtener pares candidatos para similitud y posteriormente devolver los 20 mejores candidatos para los documentos 100, 105 y 1400. De esta forma que la probabilidad de que al menos coincida una banda de minhashes en función de la similitud se ve como sigue:
+
+```{r}
+b=8; r=2;
+plot(s <- seq(0, 1, by = 0.01), 1 - (1 - s^r)^b, type = "l", ylab = "Probabilidad al menos una banda",
+     xlab = "Similitud (jaccard)")
+```
+
+O sea que la probabilidad de coincidencia de al menos una banda es mayor a 0.90 cuando _s_ es más grande que `r (1-0.10^(1/b))^{1/r}`.
+
+```{r, cache=TRUE}
+mat.split <- split(data.frame((firmas)), rep(1:b, each=r))
+mat.hashed <- sapply(mat.split, function(mat){
+    apply(mat, 2, function(x){sum(x)})
+})
+mat.hashed <- data.frame(mat.hashed)
+mat.hashed$doc_no <- 1:nrow(mat.hashed)
+```
+```{r, eval=FALSE}
+candidatos <- lapply(1:b, function(i){
+    tab.1 <- table(mat.hashed[,i])
+    codigos <- as.integer(names(tab.1[tab.1 >= 2]))
+    salida <- lapply(codigos, function(cod){ 
+        mat.hashed$doc_no[mat.hashed[,i] == cod]
+    })
+   Reduce('cbind',lapply(salida, function(x){combn(x,2)}))
+})
+candidatos.tot <- t(Reduce('cbind',candidatos))
+save(candidatos.tot, file='./Data/candidatos.tot.Rdata')
+candidatos.tot.2 <- unique(candidatos.tot)
+save(candidatos.tot.2, file='./Data/candidatos.tot.2.Rdata')
+```
+```{r}
+load('./Data/candidatos.tot.2.Rdata')
+```
+
+Tenemos un total de $`r dim(candidatos.tot.2)[1]`$ pares candidatos a similitud. Se pueden ver los primeros 6 pares a continuación.
+
+```{r}
+head(candidatos.tot.2)
+dim(candidatos.tot.2)
+```
+
+Como nos interesan en particular los mails parecidos a los mails $100$, $105$ y $1400$; vemos cuántos pares candidatos hay para cada uno de ellos.
+
+```{r}
+mails <- c(100,105,1400)
+sapply(mails, function(i) sum(candidatos.tot.2==i))
+```
+
+Para los pares candidatos vamos a calcular la similitud de Jaccard exacta.
+
+```{r, cache=TRUE}
+temp <- data.frame(candidatos.tot.2)
+cand_100 <- filter(temp, (temp[,1]==100 | temp[,2]==100))
+cand_105 <- filter(temp, (temp[,1]==105 | temp[,2]==105))
+cand_1400 <- filter(temp, (temp[,1]==1400 | temp[,2]==1400))
+rm(temp)
+
+similitudes_100 <- sapply(1:nrow(cand_100), function(i) jaccard(filter(enron, doc==cand_100[i,1]), filter(enron, doc==cand_100[i,2])))
+similitudes_105 <- sapply(1:nrow(cand_105), function(i) jaccard(filter(enron, doc==cand_105[i,1]), filter(enron, doc==cand_105[i,2])))
+similitudes_1400 <- sapply(1:nrow(cand_1400), function(i) jaccard(filter(enron, doc==cand_1400[i,1]), filter(enron, doc==cand_1400[i,2])))
+```
+
+La similitud de Jaccard exacta para todos los pares candidatos se puede ver a continuación.
+
+```{r, cache=TRUE}
+arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))
+arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))
+arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))
+```
+
+Vamos ahora a ver la distribución de palabras en cada uno de los *clusters* calculados anteriormente.
+
+```{r, message=FALSE, cache=TRUE}
+dist_100 <- filter(enron, doc %in% c(100,cand_100[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_100$prop <- 100*dist_100$n_tot/sum(dist_100$n_tot)
+dist_105 <- filter(enron, doc %in% c(105,cand_105[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_105$prop <- 100*dist_105$n_tot/sum(dist_105$n_tot)
+dist_1400 <- filter(enron, doc %in% c(1400,cand_1400[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)  
+dist_1400$prop <- 100*dist_1400$n_tot/sum(dist_1400$n_tot)
+```
+
+Palabras más comunes en el *cluster* del mail número 100.
+
+```{r, cache=TRUE}
+dist_100[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 105.
+
+```{r, cache=TRUE}
+dist_105[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 1400.
+
+```{r, cache=TRUE}
+dist_1400[1:30,]
+```
+
+Ahora graficamos la distribución de la proporción de palabras en cada *cluster*. Se puede ver que los tres tienen una distribución muy parecida, que además tiende a parecerse a una distribución de Zipf, la cual muchas veces se usa para describir la distribución de las palabras en el lenguaje inglés (y otros también).
+
+```{r, cache=TRUE}
+plot(dist_100$prop, type='l', ylab='Porcentaje (0 a 100)')
+lines(dist_105$prop, type='l', col='dark blue')
+lines(dist_1400$prop, type='l', col='dark green')
+```
+
+##Parte 2: Aplicación a búsqueda de items populares
+
+Implementaremos una búsqueda de items populares en una muestra de películas de Netflix para mostrar las 15 películas más populares en enero de 2000, junio de 2000 y enero de 2001. Para esto utilizaremos suavizamiento exponencial.
+
+```{r, cache=TRUE}
+load('./Data/netflix/dat_muestra_nflix.Rdata')
+titulos <- read.csv('./Data/netflix/movies_title_fix.csv', header=FALSE)
+names(titulos) <- c('peli_id', 'year', 'title')
+vistas_ene2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-01')
+vistas_jun2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-06')
+vistas_ene2001 <- filter(dat.muestra, substr(fecha, 1, 7)=='2001-01')
+write.csv(vistas_ene2000$peli_id, file='./Out/vistas_ene2000.csv', row.names = FALSE)
+write.csv(vistas_jun2000$peli_id, file='./Out/vistas_jun2000.csv', row.names = FALSE)
+write.csv(vistas_ene2001$peli_id, file='./Out/vistas_ene2001.csv', row.names = FALSE)
+```
+
+Script en python que hace el suavizamiento exponencial.
+
+```
+import csv
+lista = {}
+c = 1/15
+fnames = ['./Out/vistas_ene2000.csv','./Out/vistas_jun2000.csv','./Out/vistas_ene2001.csv']
+for fname in fnames:
+    with open(fname) as f:
+        encabezado = f.readline()
+        for line in f:
+            item = line.strip('\n')
+            for key in lista:
+                lista[key] = lista[key]*(1-c)
+                if(key==item):
+                    lista[key] = lista[key] + c
+            if(not (item in lista.keys())):
+                lista[item] = c
+            lista = {k:v for(k, v) in lista.iteritems() if v >= c/2}         
+    with open(fname+'_lista_out.csv', 'wb') as f: 
+        w = csv.writer(f)
+        w.writerows(lista.items())
+```
+
+```{r, eval=FALSE}
+system('python suav_exp.py')
+```
+
+```{r, cache=TRUE}
+lista_ene2000 <- read.csv('./Out/vistas_ene2000.csv_lista_out.csv', header=FALSE)
+names(lista_ene2000) <- c('peli_id','score')
+lista_ene2000_2 <- left_join(lista_ene2000, titulos)
+
+lista_jun2000 <- read.csv('./Out/vistas_jun2000.csv_lista_out.csv', header=FALSE)
+names(lista_jun2000) <- c('peli_id','score')
+lista_jun2000_2 <- left_join(lista_jun2000, titulos)
+
+lista_ene2001 <- read.csv('./Out/vistas_ene2001.csv_lista_out.csv', header=FALSE)
+names(lista_ene2001) <- c('peli_id','score')
+lista_ene2001_2 <- left_join(lista_ene2001, titulos)
+```
+
+De esta forma tenemos que las películas más populares de enero de 2000 en nuestra submuestra son:
+
+```{r, cache=TRUE}
+arrange(lista_ene2000_2,score)[1:15,3:4]
+```
+
+En junio de 2000:
+
+```{r, cache=TRUE}
+arrange(lista_jun2000_2,score)[1:15,3:4]
+```
+
+Y en enero de 2001:
+
+```{r, cache=TRUE}
+arrange(lista_ene2001_2,score)[1:15,3:4]
+```
+
+##Parte 3: Recomendación
+
+Utilizaremos datos de movielens para construir un sistema de recomendación de películas a usuarios. 
+
+Cargamos y analizamos los datos disponibles.
+
+```{r}
+rat <- read.table('./Data/ml-1m/ratings.dat',header=F, sep=":")
+rat$V2 <- NULL
+rat$V4 <- NULL
+rat$V6 <- NULL
+names(rat) <- c('user_id','movie_id','rating', 'timestamp')
+head(rat)
+
+con <- file("./Data/ml-1m/movies.dat", "r", blocking = FALSE)
+lineas <- readLines(con) # empty
+close(con)
+lista.movies <- list()
+salida <- lapply(lineas, function(linea){
+  sp <- strsplit(linea, '::', fixed=T)[[1]]
+  data_frame(movie_id = sp[1], movie_nom = sp[2], tipo = sp[3])
+})
+movies.df <- rbind_all(salida)
+movies.df$movie_id <- as.integer(movies.df$movie_id)
+length(unique(rat$user_id))
+length(unique(rat$movie_id))
+```
+
+Tenemos `r length(unique(rat$user_id))` distintos usuarios y `r length(unique(rat$movie_id))` películas distintas calificadas. Procedemos a crear un conjunto de prueba y uno de entrenamiento.
+
+```{r}
+set.seed(2805)
+valida_usuarios <- sample(unique(rat$user_id), length(unique(rat$user_id))*.3 )
+valida_pelis <- sample(unique(rat$movie_id), length(unique(rat$movie_id))*.3 )
+dat.2 <- rat %>%
+  mutate(valida_usu = user_id %in% valida_usuarios) %>%
+  mutate(valida_peli = movie_id %in% valida_pelis)
+dat.entrena <- filter(dat.2, !valida_usu | !valida_peli)
+dat.valida <- filter(dat.2, valida_usu & valida_peli)
+dat.entrena[,6] <- NULL
+dat.entrena[,5] <- NULL
+dat.valida[,6] <- NULL
+dat.valida[,5] <- NULL
+head(dat.entrena)
+head(dat.valida)
+#movies.df.v <- movies.df[unique(dat.valida$movie_id),]
+#movies.df.e <- movies.df[unique(dat.entrena$movie_id),]
+length(unique(dat.entrena$user_id))
+length(unique(dat.entrena$movie_id))
+length(unique(dat.valida$user_id))
+length(unique(dat.valida$movie_id))
+```
+
+El conjunto de entrenamiento cuenta con `r length(unique(dat.entrena$user_id))` usuarios y `r length(unique(dat.entrena$movie_id))` películas; mientras que el de validación tiene `r length(unique(dat.valida$user_id))` usuarios y `r length(unique(dat.valida$movie_id))` películas. 
+
+Creamos ahora un modelo base de referencia. Este modelo es útil para hacer *benchmarking* de intentos de predicción, como primera pieza para construcción de modelos más complejos, y también como una manera simple de producir estimaciones cuando no hay datos suficientes para hacer otro tipo de predicción. Está definido de la siguiente manera:
+
+### {#importante}
+Si $x_{ij}$ es el gusto del usuario $i$ por la película $j$, entonces nuestra predicción es
+$$\hat{x}_{ij} = \hat{b}_j +  (\hat{a}_i-\hat{\mu} ) $$
+donde $a_i$ indica un nivel general de calificaciones del usuario $i$, y $b_j$ es el nivel general de gusto por la película, definidos como
+
+1. Media general
+$$\hat{\mu} =\frac{1}{T}\sum_{s,t} x_{st}$$
+2. Promedio de calificaciones de usuario $i$ 
+$$\hat{a}_i =\frac{1}{M_i}\sum_{t} x_{i,t} $$
+3. Promedio de calificaciones de la película $j$ 
+$$\hat{b}_j =\frac{1}{N_j}\sum_{s} x_{s,j}$$
+
+También podemos escribir la predicción en términos de desviaciones:
+
+$$\hat{x}_{ij} = \hat{\mu}  +  \hat{c}_i +  \hat{d}_j $$
+donde
+
+1. Media general
+$$\hat{\mu} =\frac{1}{T}\sum_{s,t} x_{st}$$
+2. Desviación de las calificaciones de usuario $i$ respecto a la media general
+$$\hat{c}_i =\frac{1}{M_i}\sum_{t} x_{it} - \hat{\mu} $$
+3. Desviación  de la película $j$ respecto a la media general
+$$\hat{b_j} =\frac{1}{N_j}\sum_{s} x_{sj}- \hat{\mu}.$$
+
+Una vez que observamos una calificación $x_{ij}$, el residual del modelo de referencia es
+$$r_{ij} = x_{ij} - \hat{x_{ij}}.$$
+
+```{r}
+medias.usuario.e <- dat.entrena %>% group_by(user_id) %>% summarise(media_usu = mean(rating), num_calif_usu = length(rating))
+medias.peliculas.e <- dat.entrena %>% group_by(movie_id) %>% summarise(media_peli = mean(rating), num_calif_peli = length(rating))
+media.gral.e <- mean(dat.entrena$rating)
+dat.entrena.2 <- dat.entrena %>%
+  left_join(medias.usuario.e) %>%
+  left_join(medias.peliculas.e) %>%
+  mutate(media.gral = media.gral.e) %>%
+  mutate(rating_adj = media_usu - media.gral + media_peli)
+dat.entrena.2$rating_adj[is.na(dat.entrena.2$rating_adj)] <- media.gral.e
+dat.entrena.2$res <- dat.entrena.2$rating - dat.entrena.2$rating_adj
+dat.entrena.2$u_id <- as.numeric(factor(dat.entrena.2$user_id))
+dat.entrena.2$m_id <- as.numeric(factor(dat.entrena.2$movie_id))
+medias.peliculas.e$m_id <- arrange(unique(dat.entrena.2[,c(2,13)]), movie_id)[,2]
+movies.df <- left_join(movies.df,unique(dat.entrena.2[,c(2,13)]))
+movies.df <- movies.df[complete.cases(movies.df),]
+length(unique(dat.entrena.2$user_id))
+length(unique(dat.entrena.2$movie_id))
+head(dat.entrena.2)
+```
+
+```{r}
+dat.valida.2 <- dat.valida %>%
+  left_join(unique(dat.entrena.2[,c('user_id', 'u_id', 'm_id')])) %>%
+  left_join(medias.usuario.e) %>%
+  left_join(medias.peliculas.e) %>%
+  mutate(media.gral = media.gral.e) %>%
+  mutate(rating_adj = media_usu - media.gral + media_peli)
+dat.valida.2$rating_adj[is.na(dat.valida.2$rating_adj)] <- media.gral.e
+length(unique(dat.valida.2$user_id))
+length(unique(dat.valida.2$movie_id))
+head(dat.valida.2)
+```
+
+Ahora evaluamos el error de predicción en el conjunto de validación.
+
+```{r}
+sqrt(mean((dat.valida.2$rating_adj - dat.valida.2$rating)^2))
+```
+
+Una forma de utilizar el modelo base y aumentar si desempeño en la predicción, es usar dimensiones latentes en los datos. Intuitivamente, esto es que en las similitudes entre usuarios, es razonable pensar que hay ciertos “conceptos” que agrupan o separan películas, y que los usuarios se distinguen por el gusto o no que tienen por estos “conceptos”. Esta idea propone que hay ciertos factores latentes (no observados) que describen películas con “contenido implícito similar”, y usuarios según su interés en esa dimensión.
+
+Las dimensiones latentes que se encuentren pueden tener cierta interpretación como "serio-divertido", o "con violencia-sin violencia", o puede ser que sean totalmente interpretables, pues se obtienen matemáticamente.
+
+Con $k$ dimensiones latentes, el modelo que proponemos es:
+
+$$\tilde{X} = UV^t$$
+
+donde $U$ es una matrix de $nxk$ (n= número de usuarios), y $V$ es una matriz
+de $mxk$, donde $m$ es el número de películas.
+
+Buscamos que, si $X$ son las verdaderas calificaciones, entonces
+$$X\approx \tilde{X}.$$
+
+y nótese que esta aproximación es en el sentido de las entradas de $X$ que **son observadas**. Sin embargo, $\tilde{X}$ nos da predicciones para **todos los pares película-persona**.
+
+Bajo este modelo, la predicción para el usuario $i$ y la película $j$ es la siguiente suma sobre las dimensiones latentes:
+
+$$\tilde{x}_{ij} =\sum_k u_{ik} v_{jk}$$
+
+que expresa el hecho de que el gusto de $i$ por $j$ depende de una combinación (suma) de factores latentes de películas ponderados por gusto por esos factores del usuario.
+
+El número de factores latentes $k$ debe ser seleccionado (por ejemplo, según el error de validación). Dado $k$, para encontrar $U$ y $V$ (un total de $k(m+n)$ parámetros) buscamos
+minimizar 
+
+$$\sum_{(i,j)\, obs} (x_{ij}-\tilde{x}_{ij})^2$$.
+
+Además de esto, podemos usar también ideas de nuestro modelo base y modelar desviaciones en lugar de calificaciones directamente. Esto es, si $X^0$ son las predicciones del modelo base de referencia, y 
+$$R = X-X^0$$
+son los residuales del modelo base, buscamos mejor
+$$R\approx \tilde{X} = UV^t.$$
+de manera que las predicciones finales son
+$$X^0 + \tilde{X}.$$
+
+Y más aún, podemos usar regularización para que en lugar de optimizar la función de arriba, intentamos más bien minimizar (para una solo factor latente)
+
+$$\sum_{(i,j)\, obs} (r_{ij} - u_i v_j)^2  + \lambda \sum_i u_i^2 + \gamma \sum_j v_j^2 $$.
+
+Si queremos _k_ dimensiones latentes, entonces queremos minimizar la función
+
+$$\sum_{(i,j)\, obs} (r_{ij} - \sum_{l=1}^{k}{u_{il} v_{jl}})^2  + \lambda \sum_{i,l} u_{il}^2 + \gamma \sum_{j,l} v_{jl}^2 $$.
+
+Ahora vamos a utilizar descenso en gradiente estocástico para minimizar el error del modelo base y así encontrar los factores latentes en los datos. Primero construimos matrices ralas de usuarios y películas para eficientar el proceso.
+
+```{r, eval=FALSE}
+i <- dat.entrena.2$u_id
+j <- dat.entrena.2$m_id
+y <- dat.entrena.2$rating_adj
+X <- sparseMatrix(i, j, x = y)
+dim(X)
+
+i.v <- dat.valida.2$u_id
+j.v <- dat.valida.2$m_id
+y.v <- dat.valida.2$rating_adj
+X.v <- sparseMatrix(i.v, j.v, x = y.v, dims=dim(X))
+dim(X.v)
+```
+
+Compilamos las funciones creadas en C++ para acelerar el proceso. Primero se muestra el código para una función que calcula el error de predicción.
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+// [[Rcpp::export]]
+
+double calc_error(NumericVector i, NumericVector j, NumericVector x, 
+                  NumericMatrix P, NumericMatrix Q, NumericVector a, NumericVector b){
+    double suma = 0;
+    for(int t = 0; t < i.size(); t++){
+        double e = x(t) - a(i[t]-1) - b(j[t]-1)- sum(P(i(t)-1,_)  * Q(j(t)-1,_) );
+        suma = suma + e*e;
+    }              
+    double tam = i.size() + 0.0;
+    return suma/tam      ;                             
+}
+```
+
+Ahora, la función que calcula el gradiente de la función de pérdida cuadrática regularizada.
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+// [[Rcpp::export]]
+
+List gradiente(NumericVector i, NumericVector j, NumericVector x, 
+                  NumericMatrix Pin, NumericMatrix Qin,
+                  NumericVector a, NumericVector b, 
+                  double gamma, double lambda) {
+    NumericVector prow;
+    NumericVector qrow;
+    NumericMatrix Q = clone(Qin);
+    NumericMatrix P = clone(Pin);
+    NumericVector a1=clone(a);
+    NumericVector b1=clone(b);
+    double e;
+
+    for(int t = 0; t < i.size(); t++){
+         e = x(t) - a1(i(t)-1) - b1(j(t)-1)- sum(P(i(t)-1,_)  * Q(j(t)-1,_) );
+         prow = P(i(t)-1,_) + gamma*(e * Q(j(t)-1,_) - lambda* P(i(t)-1,_));
+         qrow = Q(j(t)-1,_) + gamma*(e*P(i(t)-1,_) - lambda*Q(j(t)-1,_));
+         P(i(t)-1,_) = prow;
+         Q(j(t)-1,_) = qrow;
+         a1(i(t)-1) = a1(i(t)-1) + gamma*(e-lambda*a1(i(t)-1));
+         b1(j(t)-1) = b1(j(t)-1) + gamma*(e-lambda*b(j(t)-1));
+    }
+    return List::create(P,Q,a1,b1);
+}
+```
+
+Ahora compliamos las funciones.
+
+```{r, eval=FALSE}
+Rcpp::sourceCpp('gradiente.cpp')
+Rcpp::sourceCpp('calc_error_bias.cpp')
+```
+
+La siguiente función recibe como parámetros el número de dimensiones latentes (_k_), la $\gamma$ y la $\lambda$ de regularización y las matrices de entrenamiento y validación de usuario-película en formato ralo para que mediante las funciones mostradas anteriormente minimice el error de predicción usando descenso en gradiente estocástico.
+
+```{r, message=FALSE, eval=FALSE}
+encontrar_dim_latentes <- function(i, j, y, i.v, j.v, y.v, gamma, lambda, k, deltalim){
+  X <- sparseMatrix(i, j, x = y)
+  X.v <- sparseMatrix(i.v, j.v, x = y.v, dims=dim(X))
+  set.seed(2805)
+  P <- matrix(rnorm(k*dim(X)[1],0,0.01), ncol=k, nrow=dim(X)[1])
+  Q <- matrix(rnorm(k*dim(X)[2],0,0.01), ncol=k, nrow=dim(X)[2])
+  a <- rep(0, dim(X)[1])
+  b <- rep(0, dim(X)[2]) 
+  l <- 1
+  delta <- deltalim+1
+  erroresent <- 0
+  erroresval <- 0
+  while(delta>deltalim & !is.nan(delta) & l<250){
+    ee1 <- sqrt(calc_error(i, j, y, P, Q, a, b))
+    ev <- sqrt(calc_error(i.v, j.v, y.v, P, Q, a, b))
+    erroresent <- append(erroresent,ee1)
+    erroresval <- append(erroresval,ev)
+    print(l)
+    out <- gradiente(i, j, y, P, Q, a, b, gamma, lambda)
+    P <- out[[1]]
+    Q <- out[[2]]
+    a <- out[[3]]
+    b <- out[[4]]
+    ee2 <- sqrt(calc_error(i, j, y, P, Q, a, b))
+    l <- l+1
+    delta <- abs(ee2 - ee1)
+    print(print(paste('error entrenamiento =',ee2)))
+    print(print(paste('error validación =',ev)))
+    print(paste('delta =',delta))
+  }
+  
+  df.it <- data.frame(iter=2:l)
+  df.it$erroresent <- round(erroresent[2:l], 3)
+  df.it$erroresval <- round(erroresval[2:l], 3)
+  l<-list(Q,P,df.it)
+  names(l) <- c('Q', 'P', 'err')
+  l
+}
+```
+
+Debido a que se tienen que estimar distintos parámetros libres (_k_, $\gamma$ y $\lambda$), probamos distintas combinaciones para ver cuál tiene el menor error de validación.
+
+```{r, eval=FALSE}
+dimensiones_lat<- lapply(c(5, 20, 50), function(l) lapply(c(0.002,0.02,0.2), function(m) lapply(c(0.001,0.01,0.1), function(n) {
+  print(paste('dim=',l))
+  print(paste('gamma=',m))
+  print(paste('lambda=',n))
+  temp <- encontrar_dim_latentes(i,j,y,i.v,j.v,y.v,m,n,l,0.001) 
+  save(temp, file=paste0(paste('./Data/dimlat',l,m,n),'.Rdata') ) 
+  rm(temp)} )))
+```
+
+Se prueban las matrices $P$ y $Q$ estimadas en el conjunto de validación y se grafican los errores de entrenamiento y validación.
+
+```{r, cache=TRUE}
+files <- c('./Data/dimlat 20 0.002 0.001.Rdata', './Data/dimlat 20 0.002 0.01.Rdata', './Data/dimlat 20 0.002 0.1.Rdata', './Data/dimlat 20 0.02 0.001.Rdata', './Data/dimlat 20 0.02 0.01.Rdata', './Data/dimlat 20 0.02 0.1.Rdata', './Data/dimlat 20 0.2 0.001.Rdata', './Data/dimlat 20 0.2 0.01.Rdata', './Data/dimlat 20 0.2 0.1.Rdata', './Data/dimlat 50 0.002 0.001.Rdata', './Data/dimlat 50 0.002 0.01.Rdata', './Data/dimlat 50 0.002 0.1.Rdata', './Data/dimlat 5 0.001 0.001.Rdata', './Data/dimlat 5 0.001 0.01.Rdata', './Data/dimlat 5 0.001 0.1.Rdata', './Data/dimlat 5 0.002 0.001.Rdata', './Data/dimlat 50 0.02 0.001.Rdata', './Data/dimlat 5 0.002 0.01.Rdata', './Data/dimlat 50 0.02 0.01.Rdata', './Data/dimlat 5 0.002 0.1.Rdata', './Data/dimlat 50 0.02 0.1.Rdata', './Data/dimlat 5 0.01 0.001.Rdata', './Data/dimlat 5 0.01 0.01.Rdata', './Data/dimlat 5 0.01 0.1.Rdata', './Data/dimlat 5 0.02 0.001.Rdata', './Data/dimlat 50 0.2 0.001.Rdata', './Data/dimlat 5 0.02 0.01.Rdata', './Data/dimlat 50 0.2 0.01.Rdata', './Data/dimlat 5 0.02 0.1.Rdata', './Data/dimlat 50 0.2 0.1.Rdata', './Data/dimlat 5 0.1 0.001.Rdata', './Data/dimlat 5 0.1 0.01.Rdata', './Data/dimlat 5 0.2 0.001.Rdata', './Data/dimlat 5 0.2 0.01.Rdata', './Data/dimlat 5 0.2 0.1.Rdata')
+
+errores <- data.frame()
+p <- list()
+for(i in 1:length(files)){
+  f <- files[i]
+  load(f)
+  e <- tail(temp$err,1)
+  boolean <- sum(is.nan(temp$Q))>0 | sum(is.nan(temp$P))>0
+  if(boolean) {e[2] <- NaN; e[3] <- NaN}
+  t <- gsub('?.Rdata', '\\1',gsub('^[^_]*dimlat ', '\\1', f))
+  errores <- rbind(errores, cbind(e,file=t))
+  df <- gather(temp$err, iter)
+  names(df) <- c('iter', 'tipo', 'val')
+  if(!boolean) p[[i]] <- ggplot(data=df, aes(x=iter, y=val, colour=tipo)) + geom_point() + geom_path() + ggtitle(t)
+}
+errores$id <- as.numeric(factor(errores$file))
+errores
+```
+```{r, fig.height=40}
+do.call(marrangeGrob, c(p[!sapply(p, is.null)], ncol=2, heights=10))
+```
+
+Podemos notar que hubo ciertos casos de *overflow* numérico, sin embargo, consideramos que fueron pocos y por el momento se desechan estos casos y se trabaja con los que no tuvieron errores numéricos. A continuación se grafican los errores de entrenamiento y validación de cada caso.
+
+```{r}
+errores_df <- gather(errores[complete.cases(errores),2:4], file)
+names(errores_df) <- c('file','tipo_error', 'value')
+ggplot(errores_df) + geom_bar(aes(x=file, y=value, fill=tipo_error), position="dodge", stat="identity") +
+    theme(axis.text.x = element_text(angle=90, vjust=1)) + 
+    geom_hline(yintercept=min(errores$erroresval, na.rm=TRUE)) + 
+    geom_hline(yintercept=min(errores$erroresent, na.rm=TRUE))
+```
+
+El mínimo error de validación se alcanza con el archivo `r paste('dimlat',errores[which(errores$erroresent==min(errores$erroresent, na.rm=TRUE)),4])` con un valor de `r errores[which(errores$erroresent==min(errores$erroresent, na.rm=TRUE)),3]`. Por esto, este será el que usemos como ganador.
+
+Analicemos algunos usuarios. En particular el usuario usuario 4000 y el usuario 6000, y usuario 1333. Se les recomendarán películas que no hayan visto basado en el modelo de factores latentes.
+
+```{r, message=FALSE}
+load('./Data/dimlat 5 0.1 0.001.Rdata')
+
+xx <- data.frame(movies.df %>% arrange(movie_id), temp$Q)
+
+usuario1 <- 4000
+usuario2 <- 6000
+usuario3 <- 1333
+
+usuarios <- c(4000,6000,1333)
+
+pred_l <- list(); i=1; califs.2 <- list();
+for(usuario in usuarios){
+  a<-filter(dat.entrena.2,u_id==usuario)$m_id
+  califs.1 <- dat.entrena.2 %>% filter(u_id==usuario) %>%
+    arrange(desc(rating_adj))
+  califs.2[[i]] <- left_join(califs.1, movies.df)
+  pred_l[[i]] <- data.frame(medias.peliculas.e, pred.x =  temp$Q%*%temp$P[usuario, ] ) %>%
+    inner_join(movies.df[!(movies.df$m_id %in% a),]) %>%
+    arrange(desc(pred.x))
+  i=i+1
+}
+```
+
+Para el usuario 4000, la primera tabla contiene las películas que calificó por encima del promedio, es decir, las que más le gustaron, y en la segunda tabla están las recomendaciones que se le dan.
+
+```{r}
+head(califs.2[[1]],30)[,14:15]
+head(pred_l[[1]],20)[,c(6,7)]
+```
+
+Para el usuario 6000, las tablas son de la misma forma que para el usuario anterior.
+
+```{r}
+head(califs.2[[2]],30)[,14:15]
+head(pred_l[[2]],20)[,c(6,7)]
+```
+
+
+Para el usuario 1333.
+
+```{r}
+head(califs.2[[3]],30)[,14:15]
+head(pred_l[[3]],20)[,c(6,7)]
+```
+
+
