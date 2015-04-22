@@ -1,5 +1,6 @@
 $ cat .gitignore
 
+*.pdf
 Tarea_03/Data/*
 *.Rhistory
 .Rhistory
@@ -7,4 +8,8 @@ Tarea_03/Data/*
 /examen_1/LuisFe/*
 /examen_1/Examen_1_Mario_Becerra_cache/*
 /examen_1/Examen_1_Mario_Becerra_files/*
+/examen_1/Examen_1_Mario_Becerra_2_files/*
+/examen_1/Examen_1_Mario_Becerra_2_cache/*
 /examen_1/Out/*
+/examen_2/*.csv
+/examen_2/*.pdf

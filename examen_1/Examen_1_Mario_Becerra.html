@@ -72,6 +72,7 @@ img {
 <h2>Parte 1: correos de Enron, similitud y minhashing.</h2>
 <p>En este ejemplo, mediante minhashing/Locality-Sensitive Hashing, construiremos una aplicación para devolver rápidamente correos similares a uno dado, en el sentido de que contienen palabras similares.</p>
 <p>Utilizaremos los datos de correo de Enron de <a href="https://archive.ics.uci.edu/ml/datasets/Bag+of+Words">https://archive.ics.uci.edu/ml/datasets/Bag+of+Words</a>.</p>
+<<<<<<< HEAD
 <pre class="r"><code>options(digits=4)
 library(dplyr)
 library(tidyr)
@@ -80,6 +81,10 @@ library(Rcpp)
 library(ggplot2)
 library(gridExtra)</code></pre>
 <pre class="r"><code>enron &lt;- read.table('./Data/enron/docword.enron.txt', skip=3, header=FALSE, sep=' ')
+=======
+<pre class="r"><code>library(dplyr)
+enron &lt;- read.table('./Data/enron/docword.enron.txt', skip=3, header=FALSE, sep=' ')
+>>>>>>> parent of c9cf4db... Modelo base recom
 names(enron) &lt;- c('doc','word_id','n')
 head(enron)</code></pre>
 <pre><code>##   doc word_id n
@@ -506,6 +511,7 @@ lista_ene2001_2 &lt;- left_join(lista_ene2001, titulos)</code></pre>
 ## 14 1945                 Anchors Aweigh
 ## 15 1964 Treasures of the Twilight Zone</code></pre>
 </div>
+<<<<<<< HEAD
 <div id="parte-3-recomendacion" class="section level2">
 <h2>Parte 3: Recomendación</h2>
 <p>Utilizaremos datos de movielens para construir un sistema de recomendación de películas a usuarios.</p>
@@ -1133,6 +1139,8 @@ for(usuario in usuarios){
 ## 20                            Lamerica (1994)          Drama</code></pre>
 </div>
 </div>
+=======
+>>>>>>> parent of c9cf4db... Modelo base recom
 
 
 </div>
