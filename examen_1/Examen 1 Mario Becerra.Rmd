@@ -1,0 +1,337 @@
+---
+title: "Examen 1 (Métodos Analíticos)"
+author: "Mario Becerra 124362"
+date: "16/03/2015"
+output: html_document
+---
+
+##Parte 1: correos de Enron, similitud y minhashing.
+
+En este ejemplo, mediante minhashing/Locality-Sensitive Hashing, construiremos una aplicación para devolver rápidamente correos similares a uno dado, en el sentido de que contienen palabras similares.
+
+Utilizaremos los datos de correo de Enron de https://archive.ics.uci.edu/ml/datasets/Bag+of+Words. 
+
+```{r, message=FALSE, cache=TRUE}
+library(dplyr)
+enron <- read.table('./Data/enron/docword.enron.txt', skip=3, header=FALSE, sep=' ')
+names(enron) <- c('doc','word_id','n')
+head(enron)
+vocab <- read.table('./Data/enron/vocab.enron.txt', header=FALSE)
+vocab$word_id <- 1:nrow(vocab)
+head(vocab)
+enron <- arrange(enron, word_id)
+```
+
+Usaremos similitud de Jaccard basada en el modelo bag of words para documentos, es decir, solo en función de las palabras que contienen: la similitud entre el documento A y B es el número de palabras en común dividido entre el número total de palabras que ocurren en los dos documentos. Aquí hay una implementación simple:
+
+```{r, cache=TRUE}
+jaccard <- function(doc1, doc2){
+  a <- length(union(doc1$word_id, doc2$word_id))
+  c <- length(intersect(doc1$word_id, doc2$word_id))
+  c/a
+}
+jaccard(filter(enron, doc==1), filter(enron, doc==2))
+```
+
+Tenemos una colección de `r length(unique(enron$doc))` mails cargados en forma de lista larga.
+
+El objetivo ahora es construir una matriz de firmas de minhashing para esta colección y utilizar esta matriz de firmas para encontrar mails similares al 900 (con más de 50% de similitud de Jaccard).
+
+Definimos primero la función hash. Tendremos 200 hashes en total, así que la matriz de firmas tendrá dimensión $200 \times `r length(unique(enron$doc))`$.
+
+```{r, eval=FALSE}
+set.seed(2805)
+hash.lista <- lapply(1:200, function(i){
+    primo <- length(unique(enron$word_id))
+    a <- sample(1:(primo-1), 1)
+    b <- sample(1:(primo-1), 1)
+    function(x){
+        ((a*(x-1) + b) %% primo)  + 1
+    }
+})
+```
+
+La siguiente función (*update_mat*), escrita en C++ para mejorar el desempeño, actualiza la matriz de firmas de acuerdo al siguiente algoritmo:
+
+Supongamos que tenemos $h_1,...,h_m$ funciones hash.
+
+Definimos inicialmente la matriz sig de firmas como $sig(i,c)=\infty$.
+
+* Para cada renglón $r$ (palabra):
+
+    * Para cada documento $c$ (columna)
+
+        * Si c tienen un valor mayor a $0$ en el renglón r, entonces para cada función hash $h_i$, si $h_i(r)$ es menor a $sig(i,c)$, entonces $sig(i,c)=hi(r)$.
+
+Al final del algoritmo, $sig$ es la matriz de firmas de los documentos bajo las funciones hash $h_1,...,h_m$.
+
+```
+#include <Rcpp.h>
+using namespace Rcpp;
+// source this function into an R session using the Rcpp::sourceCpp 
+// function (or via the Source button on the editor toolbar)
+
+// [[Rcpp::export]]
+int update_mat(NumericMatrix x, NumericVector doc, NumericVector h) {
+   int nrow = x.nrow();
+   int ncol = doc.size();
+   for(int i =0; i < nrow; i++){
+     	for(int j =0; j < ncol; j++){
+       		if(h[i] < x( i,doc[j]-1)){
+            	x(i,doc[j]-1) =  h[i];
+            }
+       }
+   }
+   return 1;
+}
+```
+Ahora, el siguiente código ejecuta todo el algoritmo y crea la matriz de firmas.
+
+```{r, eval=FALSE}
+library(Rcpp)
+sourceCpp('./update_mat.cpp')
+minhash <- function(dat, hash.lista){
+    n_words <- length(unique(enron$word_id))
+    n_docs <- length(unique(enron$doc))
+    p <- length(hash.lista)
+    sig <- matrix(rep(Inf, p*n_docs) , ncol = n_docs)
+    for(i in 1:n_words){
+    #for(i in 1:10){
+      hash_row <- sapply(hash.lista, function(h) h(i))
+      document <- enron$doc[which(enron$word_id==i)]
+      out <- update_mat(sig, document, hash_row)  
+      print(i)
+    }
+    sig
+}
+
+firmas <- minhash(enron,hash.lista)
+save(firmas, file='./Data/firmas.Rdata')
+```
+
+Encontramos ahora los mails similares al mail 900.
+
+```{r}
+load('./Data/firmas.Rdata')
+doc.1.firma <- firmas[,900]
+sim_est <- apply(firmas, 2, function(x){mean(x==doc.1.firma)})
+docs.sim <- which(sim_est>=0.5)
+docs.sim <- docs.sim[docs.sim!=900]
+sim_est[(sim_est>=0.5 & sim_est<1)]
+docs.sim
+```
+Podemos ver que los documentos que mayor similitud tienen al mail 900 tienen similitudes aproximadas de Jaccard de `r sim_est[(sim_est>=0.5 & sim_est<1)]`, y corresponden a los documentos `r docs.sim`.
+
+Ya que redujimos los candidatos a documentos similares, podemos calcular las verdaderas similitudes de Jaccard sin miedo al tiempo pues solo hay que calcular `r length(docs.sim)` similitudes. Estas similitudes se pueden ver a continuación.
+
+```{r, cache=TRUE}
+similitudes <- sapply(docs.sim, function(i) jaccard(filter(enron, doc==900), filter(enron, doc==i)))
+cbind(docs.sim, similitudes)
+```
+
+Podemos ver qué palabras son las que tienen en común cada mail similar con el mail 900.
+
+```{r, cache=TRUE}
+inter_palabras <- function(doc1, doc2){
+  a <- intersect(doc1$word_id, doc2$word_id)
+  as.character(vocab[a,1])
+}
+palabras <- sapply(docs.sim, function(i) inter_palabras(filter(enron, doc==900), filter(enron, doc==i)))
+```
+```{r}
+palabras
+```
+
+El siguiente paso es encontrar, entre todos los posibles mails, pares de ellos que tienen alto grado de similitud. Aún cuando hemos reducido la dimensionalidad del problema, calcular todos los posibles pares de similitudes es infactible, por eso lo que haremos es usar *Locality-Sensitive Hashing* (LSH), el cual es una especie de *clustering* de datos; esto se logra asignando los documentos a una colección de cubetas de forma que documentos con alta similitud caen en la misma cubeta.
+
+Utilizaremos 8 bandas de 25 hashes cada una para obtener pares candidatos para similitud y posteriormente devolver los 20 mejores candidatos para los documentos 100, 105 y 1400.
+
+```{r, cache=TRUE}
+b=8; r=25;
+mat.split <- split(data.frame((firmas)), rep(1:b, each=r))
+mat.hashed <- sapply(mat.split, function(mat){
+    apply(mat, 2, function(x){sum(x)})
+})
+mat.hashed <- data.frame(mat.hashed)
+mat.hashed$doc_no <- 1:nrow(mat.hashed)
+```
+```{r, eval=FALSE}
+candidatos <- lapply(1:b, function(i){
+    tab.1 <- table(mat.hashed[,i])
+    codigos <- as.integer(names(tab.1[tab.1 >= 2]))
+    salida <- lapply(codigos, function(cod){ 
+        mat.hashed$doc_no[mat.hashed[,i] == cod]
+    })
+   Reduce('cbind',lapply(salida, function(x){combn(x,2)}))
+})
+candidatos.tot <- t(Reduce('cbind',candidatos))
+save(candidatos.tot, file='./Data/candidatos.tot.Rdata')
+candidatos.tot.2 <- unique(candidatos.tot)
+save(candidatos.tot.2, file='./Data/candidatos.tot.2.Rdata')
+```
+```{r}
+load('./Data/candidatos.tot.2.Rdata')
+```
+
+Tenemos un total de $`r dim(candidatos.tot.2)[1]`$ pares candidatos a similitud. Se pueden ver los primeros 6 pares a continuación.
+
+```{r}
+head(candidatos.tot.2)
+dim(candidatos.tot.2)
+```
+
+Como nos interesan en particular los mails parecidos a los mails $100$, $105$ y $1400$; vemos cuántos pares candidatos hay para cada uno de ellos.
+
+```{r}
+mails <- c(100,105,1400)
+sapply(mails, function(i) sum(candidatos.tot.2==i))
+```
+
+Para los pares candidatos vamos a calcular la similitud de Jaccard exacta.
+
+```{r, cache=TRUE}
+temp <- data.frame(candidatos.tot.2)
+cand_100 <- filter(temp, (temp[,1]==100 | temp[,2]==100))
+cand_105 <- filter(temp, (temp[,1]==105 | temp[,2]==105))
+cand_1400 <- filter(temp, (temp[,1]==1400 | temp[,2]==1400))
+rm(temp)
+
+similitudes_100 <- sapply(1:nrow(cand_100), function(i) jaccard(filter(enron, doc==cand_100[i,1]), filter(enron, doc==cand_100[i,2])))
+similitudes_105 <- sapply(1:nrow(cand_105), function(i) jaccard(filter(enron, doc==cand_105[i,1]), filter(enron, doc==cand_105[i,2])))
+similitudes_1400 <- sapply(1:nrow(cand_1400), function(i) jaccard(filter(enron, doc==cand_1400[i,1]), filter(enron, doc==cand_1400[i,2])))
+```
+
+La similitud de Jaccard exacta para todos los pares candidatos se puede ver a continuación.
+
+```{r, cache=TRUE}
+arrange(cbind(cand_100,similitudes_100), desc(similitudes_100))
+arrange(cbind(cand_105,similitudes_105), desc(similitudes_105))
+arrange(cbind(cand_1400,similitudes_1400), desc(similitudes_1400))
+```
+
+Vamos ahora a ver la distribución de palabras en cada uno de los *clusters* calculados anteriormente.
+
+```{r, message=FALSE, cache=TRUE}
+dist_100 <- filter(enron, doc %in% c(100,cand_100[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_100$prop <- 100*dist_100$n_tot/sum(dist_100$n_tot)
+dist_105 <- filter(enron, doc %in% c(105,cand_105[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)
+dist_105$prop <- 100*dist_105$n_tot/sum(dist_105$n_tot)
+dist_1400 <- filter(enron, doc %in% c(1400,cand_1400[,2])) %>% group_by(word_id) %>%
+  summarise(n_tot= sum(n)) %>% arrange(desc(n_tot)) %>% left_join(vocab)  
+dist_1400$prop <- 100*dist_1400$n_tot/sum(dist_1400$n_tot)
+```
+
+Palabras más comunes en el *cluster* del mail número 100.
+
+```{r, cache=TRUE}
+dist_100[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 105.
+
+```{r, cache=TRUE}
+dist_105[1:30,]
+```
+
+Palabras más comunes en el *cluster* del mail número 1400.
+
+```{r, cache=TRUE}
+dist_1400[1:30,]
+```
+
+Ahora graficamos la distribución de la proporción de palabras en cada *cluster*. Se puede ver que los tres tienen una distribución muy parecida, que además tiende a parecerse a una distribución de Zipf, la cual muchas veces se usa para describir la distribución de las palabras en el lenguaje inglés (y otros también).
+
+```{r, cache=TRUE}
+plot(dist_100$prop, type='l', ylab='Porcentaje (0 a 100)')
+lines(dist_105$prop, type='l', col='dark blue')
+lines(dist_1400$prop, type='l', col='dark green')
+```
+
+##Parte 2: Aplicación a búsqueda de items populares
+
+Implementaremos una búsqueda de items populares en una muestra de películas de Netflix para mostrar las 15 películas más populares en enero de 2000, junio de 2000 y enero de 2001. Para esto utilizaremos suavizamiento exponencial.
+
+```{r}
+load('./Data/netflix/dat_muestra_nflix.Rdata')
+titulos <- read.csv('./Data/netflix/movies_title_fix.csv', header=FALSE)
+names(titulos) <- c('peli_id', 'year', 'title')
+vistas_ene2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-01')
+vistas_jun2000 <- filter(dat.muestra, substr(fecha, 1, 7)=='2000-06')
+vistas_ene2001 <- filter(dat.muestra, substr(fecha, 1, 7)=='2001-01')
+write.csv(vistas_ene2000$peli_id, file='./Out/vistas_ene2000.csv', row.names = FALSE)
+write.csv(vistas_jun2000$peli_id, file='./Out/vistas_jun2000.csv', row.names = FALSE)
+write.csv(vistas_ene2001$peli_id, file='./Out/vistas_ene2001.csv', row.names = FALSE)
+```
+
+Script en python que hace el suavizamiento exponencial.
+
+```
+import csv
+lista = {}
+c = 1/15
+fnames = ['./Out/vistas_ene2000.csv','./Out/vistas_jun2000.csv','./Out/vistas_ene2001.csv']
+for fname in fnames:
+    with open(fname) as f:
+        encabezado = f.readline()
+        for line in f:
+            item = line.strip('\n')
+            for key in lista:
+                lista[key] = lista[key]*(1-c)
+                if(key==item):
+                    lista[key] = lista[key] + c
+            if(not (item in lista.keys())):
+                lista[item] = c
+            lista = {k:v for(k, v) in lista.iteritems() if v >= c/2}         
+    with open(fname+'_lista_out.csv', 'wb') as f: 
+        w = csv.writer(f)
+        w.writerows(lista.items())
+```
+
+```{r, eval=FALSE}
+system('python suav_exp.py')
+```
+
+```{r}
+lista_ene2000 <- read.csv('./Out/vistas_ene2000.csv_lista_out.csv', header=FALSE)
+names(lista_ene2000) <- c('peli_id','score')
+lista_ene2000_2 <- left_join(lista_ene2000, titulos)
+
+lista_jun2000 <- read.csv('./Out/vistas_jun2000.csv_lista_out.csv', header=FALSE)
+names(lista_jun2000) <- c('peli_id','score')
+lista_jun2000_2 <- left_join(lista_jun2000, titulos)
+
+lista_ene2001 <- read.csv('./Out/vistas_ene2001.csv_lista_out.csv', header=FALSE)
+names(lista_ene2001) <- c('peli_id','score')
+lista_ene2001_2 <- left_join(lista_ene2001, titulos)
+```
+
+De esta forma tenemos que las películas más populares de enero de 2000 en nuestra submuestra son:
+
+```{r}
+arrange(lista_ene2000_2,score)[1:15,3:4]
+```
+
+En junio de 2000:
+
+```{r}
+arrange(lista_jun2000_2,score)[1:15,3:4]
+```
+
+Y en enero de 2001:
+
+```{r}
+arrange(lista_ene2001_2,score)[1:15,3:4]
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,168 @@
+---
+title: "Tarea 5"
+author: "Mario Becerra 124362"
+date: "21/04/2015"
+output: html_document
+---
+
+```{r setup}
+options(digits=2)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(RWeka)
+library(parallel)
+library(knitr)
+```
+
+
+Cargamos el Quijote.
+
+```{r}
+quijote <- scan('Quijote.txt',  sep="\n", what = character())
+```
+
+Creamos tres funciones para crear unigramas, bigramas y trigramas de un texto; y una que limpia el texto, esto es, quita signos de puntuación que en este contexto no son útiles.
+
+```{r}
+unigramas <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1)) 
+bigramas <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2)) 
+trigramas <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3)) 
+limpiar <- function(texto){
+  texto.1.1 <- gsub("\\.", " </s> <s>", texto)
+  texto.1.2 <- gsub(" <s>$", "", texto.1.1)
+  texto.2 <- gsub("[«»]", "", texto.1.2) 
+  texto.2.1 <- gsub(";", " <punto_coma> ", texto.2) 
+  texto.2.2 <- gsub("\\:", " <dos_puntos> ", texto.2.1) 
+  texto.2.2 <- gsub("\\,", " <coma> ", texto.2.2) 
+  texto.3 <- gsub("^\\s+|\\s+$", "",texto.2.2) # espacios antes y después
+  texto.4 <- gsub("\\\"", "", texto.3)
+  paste0('<s> <s> ', texto.4)
+}
+
+contar_ngramas <- function(ngramas, n=2){
+  #contar ngramas
+  ngrama.2 <- mclapply(ngramas, function(x){data.frame(table(x))}, mc.cores=2) 
+  noms <- paste('w',1:n, sep="")
+  ngrama.3 <- rbind_all(ngrama.2)
+  ngrama.4 <- ngrama.3 %>% group_by(x) %>% summarise(frec = sum(Freq)) 
+  ngrama.5 <- ngrama.4 %>% arrange(desc(frec))
+  ngrama.6 <- ngrama.5 %>% separate(x, noms, ' ')
+  ngrama.6
+}
+```
+
+```{r, eval=FALSE}
+quijote_1 <- mclapply(quijote, limpiar, mc.cores = 2)
+save(quijote_1, file='salida/quijote_l.Rdata')
+
+quijote_unigramas <- lapply(quijote_1, unigramas)
+unig_frec <-contar_ngramas(quijote_unigramas, 1)
+save(unig_frec, file='salida/unig_frec.Rdata')
+
+quijote_bigramas <- lapply(quijote_1, bigramas)
+big_frec <- contar_ngramas(quijote_bigramas, 2)
+save(big_frec, file='salida/big_frec.Rdata')
+
+quijote_trigramas <- lapply(quijote_1, trigramas)
+trig_frec <- contar_ngramas(quijote_trigramas, 3)
+save(trig_frec, file='salida/trig_frec.Rdata')
+```
+
+```{r}
+load('salida/unig_frec.Rdata')
+load('salida/big_frec.Rdata')
+load('salida/trig_frec.Rdata')
+```
+
+```{r}
+head(data.frame(unig_frec), 50)
+head(data.frame(big_frec), 50)
+head(data.frame(trig_frec), 50)
+```
+
+Una función que crea frases a partir de los n-gramas.
+
+```{r}
+crear_frase_uni <- function(k=10){
+  muestra <- sample_n(unig_frec, k, weight = frec,replace=TRUE)$w1
+  frase <- paste(muestra, collapse = " ")
+  frase.1 <- gsub("<punto_coma>", ";", frase)
+  frase.2 <- gsub("<coma>", ",", frase.1)
+  frase.3 <- gsub("</s> <s> <s>", ".\n", frase.2)
+  frase.3.1 <- gsub("</s> <s>", ".", frase.3)
+  frase.4 <- gsub("<dos_puntos>", ":", frase.3.1)
+  frase.4
+}
+
+crear_frase_bi <- function(k=10, comienzo='<s>'){
+  actual <- comienzo
+  frase <- ''
+  for(j in 1:k){
+    pal <- big_frec %>% filter(w1==actual) %>% sample_n(size =1, weight=frec, replace=TRUE)
+    actual <- pal$w2
+    frase <- paste(frase, actual, sep=' ')
+  }
+  frase.1 <- gsub("<punto_coma>", ";", frase)
+  frase.2 <- gsub("<coma>", ",", frase.1)
+  frase.3 <- gsub("</s> <s> <s>", ".\n", frase.2)
+  frase.3.1 <- gsub("</s> <s>", ".", frase.3)
+  frase.4 <- gsub("<dos_puntos>", ":", frase.3.1)
+  frase.4
+}
+
+crear_frase_tri <- function(k=10, comienzo='<s>'){
+  actual <- comienzo
+  frase <- ''
+  for(j in 1:k){
+    pal <- trig_frec %>% filter(w1==actual) %>% sample_n(size =1, weight=frec, replace=TRUE)
+    medio <- pal$w2
+    actual <- pal$w3
+    frase <- paste(frase, medio, actual, sep=' ')
+  }
+  frase.1 <- gsub("<punto_coma>", ";", frase)
+  frase.2 <- gsub("<coma>", ",", frase.1)
+  frase.3 <- gsub("</s> <s> <s>", ".\n", frase.2)
+  frase.3.1 <- gsub("</s> <s>", ".", frase.3)
+  frase.4 <- gsub("<dos_puntos>", ":", frase.3.1)
+  frase.4
+}
+
+set.seed(124362)
+```
+
+Ejemplos de frases de distintas longitudes creadas a partir de unigramas.
+
+```{r}
+crear_frase_uni(k=40)
+crear_frase_uni(k=50)
+crear_frase_uni(k=60)
+crear_frase_uni(k=70)
+crear_frase_uni(k=80)
+```
+
+A partir de bigramas.
+
+```{r}
+#crear_frase_bi(k=40)
+crear_frase_bi(k=50)
+crear_frase_bi(k=60)
+crear_frase_bi(k=70)
+crear_frase_bi(k=80)
+```
+
+A partir de trigramas.
+
+```{r}
+crear_frase_tri(k=40)
+crear_frase_tri(k=50)
+crear_frase_tri(k=60)
+crear_frase_tri(k=70)
+crear_frase_tri(k=80)
+```
+
+
+
+
+

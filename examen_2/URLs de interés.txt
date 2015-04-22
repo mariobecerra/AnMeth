@@ -1,0 +1,5 @@
+URLs de interés
+
+Mining the social web: https://github.com/ptwobrussell/Mining-the-Social-Web
+Visualizing the Twitter social graph: http://code.recollect.com/post/20476037331/visualizing-twitter-social-graph-pt1
+Análisis del tema Ayotzinapa: http://blog.indatcom.mx/2014/11/06/analisis-del-tema-ayotzinapa/
